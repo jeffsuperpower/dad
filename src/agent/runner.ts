@@ -8,6 +8,12 @@ import {
   addCost,
   logMessage,
 } from '../db/conversations.js';
+import {
+  getRelationship,
+  createRelationship,
+  updateRespectScore,
+  updateInteractionSummary,
+} from '../db/relationships.js';
 
 export interface AgentResult {
   text: string;
@@ -71,6 +77,21 @@ async function executeAgent(
   // Log the user message
   logMessage(conversation.id, 'user', prompt);
 
+  // Get or create relationship for this user
+  let rel = getRelationship(userId);
+  if (!rel) {
+    rel = createRelationship(userId, '');
+  }
+
+  // Build user context for the system prompt
+  const interactions = JSON.parse(rel.interaction_summary || '[]') as Array<{ts: string; topic: string; sentiment: string}>;
+  const recentInteractions = interactions.slice(-10);
+  const userContext = `You are talking to Slack user <@${userId}>${rel.display_name ? ` (${rel.display_name})` : ''}.
+Their current respect score with you: ${rel.respect_score}/100
+Total past interactions: ${rel.total_interactions}
+Last interaction: ${rel.last_interaction || 'never'}
+${recentInteractions.length > 0 ? `\nRecent interaction history:\n${recentInteractions.map(i => `- [${i.ts}] ${i.topic} (${i.sentiment})`).join('\n')}` : '\nThis is your first interaction with them.'}`;
+
   const startTime = Date.now();
 
   // Build CLI args
@@ -79,7 +100,7 @@ async function executeAgent(
     '--output-format', 'json',
     '--model', config.agent.model,
     '--max-turns', String(config.agent.maxTurns),
-    '--system-prompt', getSystemPrompt(),
+    '--system-prompt', getSystemPrompt(userContext),
   ];
 
   let result: AgentResult;
@@ -112,6 +133,33 @@ async function executeAgent(
   if (result.sessionId && result.sessionId !== conversation.session_id) {
     updateSessionId(conversation.id, result.sessionId);
   }
+
+  // Parse respect change from response
+  const respectMatch = result.text.match(/\[RESPECT:([+-]?\d+)\]/);
+  if (respectMatch) {
+    const delta = parseInt(respectMatch[1], 10);
+    const newScore = Math.max(0, Math.min(100, rel.respect_score + delta));
+    updateRespectScore(userId, newScore);
+    console.log(`[Agent] Respect for ${userId}: ${rel.respect_score} -> ${newScore} (${delta >= 0 ? '+' : ''}${delta})`);
+
+    // Strip the respect tag from the visible response
+    result.text = result.text.replace(/\s*\[RESPECT:[+-]?\d+\]\s*/g, '').trim();
+  }
+
+  // Compact and update interaction summary
+  const history = JSON.parse(rel.interaction_summary || '[]') as Array<{ts: string; topic: string; sentiment: string}>;
+  const topicSnippet = prompt.length > 100 ? prompt.slice(0, 100) + '...' : prompt;
+  const sentiment = respectMatch
+    ? (parseInt(respectMatch[1], 10) > 0 ? 'positive' : parseInt(respectMatch[1], 10) < 0 ? 'negative' : 'neutral')
+    : 'neutral';
+  history.push({
+    ts: new Date().toISOString(),
+    topic: topicSnippet,
+    sentiment,
+  });
+  // Keep only last 50 interactions
+  const trimmed = history.slice(-50);
+  updateInteractionSummary(userId, JSON.stringify(trimmed));
 
   // Log the assistant response
   logMessage(conversation.id, 'assistant', result.text, result.costUsd, durationMs);

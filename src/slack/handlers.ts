@@ -9,6 +9,34 @@ import {
   appendTraining,
   downloadFile,
 } from '../agent/training.js';
+import {
+  getRelationship,
+  updateDisplayName,
+} from '../db/relationships.js';
+
+// Map respect score to emoji
+function scoreToEmoji(score: number): string {
+  if (score >= 95) return 'heart_eyes';
+  if (score >= 85) return 'star-struck';
+  if (score >= 75) return 'blush';
+  if (score >= 65) return 'slightly_smiling_face';
+  if (score >= 55) return 'neutral_face';
+  if (score >= 45) return 'confused';
+  if (score >= 35) return 'disappointed';
+  if (score >= 20) return 'angry';
+  return 'face_with_rolling_eyes';
+}
+
+// Resolve Slack user display name
+async function resolveUserName(client: any, userId: string): Promise<string> {
+  try {
+    const info = await client.users.info({ user: userId });
+    const profile = info.user?.profile;
+    return profile?.display_name || profile?.real_name || info.user?.name || '';
+  } catch {
+    return '';
+  }
+}
 
 export function registerHandlers(app: App): void {
   // Handle @Dad mentions in channels
@@ -199,6 +227,15 @@ async function handleMessage(
     return;
   }
 
+  // Resolve and cache user display name
+  const rel = getRelationship(userId);
+  if (!rel || !rel.display_name) {
+    const name = await resolveUserName(client, userId);
+    if (name) {
+      updateDisplayName(userId, name);
+    }
+  }
+
   // Add thinking reaction
   try {
     await client.reactions.add({
@@ -240,7 +277,7 @@ async function handleMessage(
       });
     }
 
-    // Swap reaction
+    // Swap reaction - use respect-based emoji
     try {
       await client.reactions.remove({
         channel: channelId,
@@ -251,9 +288,11 @@ async function handleMessage(
       // Ignore
     }
     try {
+      const updatedRel = getRelationship(userId);
+      const emoji = updatedRel ? scoreToEmoji(updatedRel.respect_score) : 'white_check_mark';
       await client.reactions.add({
         channel: channelId,
-        name: 'white_check_mark',
+        name: emoji,
         timestamp: threadTs,
       });
     } catch {

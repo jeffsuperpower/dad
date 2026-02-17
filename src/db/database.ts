@@ -41,5 +41,15 @@ function migrate(db: Database.Database): void {
       duration_ms INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS relationships (
+      id INTEGER PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      display_name TEXT DEFAULT '',
+      respect_score INTEGER DEFAULT 70,
+      interaction_summary TEXT DEFAULT '[]',
+      last_interaction TEXT DEFAULT (datetime('now')),
+      total_interactions INTEGER DEFAULT 0
+    );
   `);
 }
