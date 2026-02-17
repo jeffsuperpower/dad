@@ -10,7 +10,6 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.35",
     "@slack/bolt": "^4.2.0",
     "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.7"

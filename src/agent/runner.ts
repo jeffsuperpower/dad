@@ -1,6 +1,6 @@
-import { query } from '@anthropic-ai/claude-code';
+import { spawn } from 'child_process';
 import { config } from '../config.js';
-import { SYSTEM_PROMPT } from './system-prompt.js';
+import { getSystemPrompt } from './system-prompt.js';
 import {
   findConversation,
   createConversation,
@@ -71,80 +71,102 @@ async function executeAgent(
   // Log the user message
   logMessage(conversation.id, 'user', prompt);
 
-  // Build SDK options
-  const options: Record<string, unknown> = {
-    model: config.agent.model,
-    maxTurns: config.agent.maxTurns,
-    maxBudgetUsd: config.agent.maxBudgetUsd,
-    cwd: config.agent.cwd,
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
-    systemPrompt: SYSTEM_PROMPT,
-  };
+  const startTime = Date.now();
+
+  // Build CLI args
+  const args = [
+    '--print',
+    '--output-format', 'json',
+    '--model', config.agent.model,
+    '--max-turns', String(config.agent.maxTurns),
+    '--system-prompt', getSystemPrompt(),
+  ];
 
   // Resume session if continuing a thread
   if (conversation.session_id) {
-    options.resume = conversation.session_id;
+    args.push('--resume', conversation.session_id);
   }
 
-  const startTime = Date.now();
-  let sessionId = conversation.session_id || '';
-  let resultText = '';
-  let costUsd = 0;
-  let turns = 0;
+  // Add the prompt
+  args.push(prompt);
 
-  const stream = query({
-    prompt,
-    options: options as any,
-  });
-
-  for await (const message of stream) {
-    if (message.type === 'system' && message.subtype === 'init') {
-      sessionId = (message as any).session_id;
-      if (sessionId && sessionId !== conversation.session_id) {
-        updateSessionId(conversation.id, sessionId);
-      }
-    }
-
-    if (message.type === 'assistant') {
-      // Extract text from content blocks for progress updates
-      const content = (message as any).message?.content;
-      if (content && Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'text' && block.text) {
-            onProgress?.(block.text);
-          }
-        }
-      }
-    }
-
-    if (message.type === 'result') {
-      const result = message as any;
-      if (result.subtype === 'success') {
-        resultText = result.result || '';
-        costUsd = result.total_cost_usd || 0;
-        turns = result.num_turns || 0;
-      } else {
-        // Error result
-        resultText =
-          `Error: ${result.subtype}\n${(result.errors || []).join('\n')}` ||
-          'Agent encountered an error.';
-        costUsd = result.total_cost_usd || 0;
-      }
-    }
-  }
+  const result = await spawnClaude(args, config.agent.cwd);
 
   const durationMs = Date.now() - startTime;
 
-  // Log the assistant response
-  logMessage(conversation.id, 'assistant', resultText, costUsd, durationMs);
-  addCost(conversation.id, costUsd, turns);
+  // Update session ID if we got one
+  if (result.sessionId && result.sessionId !== conversation.session_id) {
+    updateSessionId(conversation.id, result.sessionId);
+  }
 
-  return {
-    text: resultText,
-    costUsd,
-    durationMs,
-    turns,
-    sessionId,
-  };
+  // Log the assistant response
+  logMessage(conversation.id, 'assistant', result.text, result.costUsd, durationMs);
+  addCost(conversation.id, result.costUsd, result.turns);
+
+  return { ...result, durationMs };
+}
+
+function spawnClaude(
+  args: string[],
+  cwd: string,
+): Promise<AgentResult> {
+  return new Promise((resolve, reject) => {
+    console.log('[Agent] Spawning claude with args:', args.slice(0, 6).join(' '), '...');
+
+    const proc = spawn('claude', args, {
+      cwd,
+      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'cli' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+
+    proc.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', (code) => {
+      console.log('[Agent] claude exited with code:', code);
+      if (stderr) {
+        console.log('[Agent] stderr:', stderr.slice(0, 500));
+      }
+
+      if (code !== 0) {
+        reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 200)}`));
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdout);
+        resolve({
+          text: parsed.result || 'Done.',
+          costUsd: parsed.total_cost_usd || 0,
+          turns: parsed.num_turns || 0,
+          sessionId: parsed.session_id || '',
+          durationMs: parsed.duration_ms || 0,
+        });
+      } catch {
+        // If not JSON, just return the raw output
+        resolve({
+          text: stdout || 'Done (no output).',
+          costUsd: 0,
+          turns: 0,
+          sessionId: '',
+          durationMs: 0,
+        });
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to spawn claude: ${err.message}`));
+    });
+
+    // Close stdin
+    proc.stdin.end();
+  });
 }

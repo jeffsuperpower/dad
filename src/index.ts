@@ -3,6 +3,7 @@ import { createSlackApp } from './slack/app.js';
 import { registerHandlers } from './slack/handlers.js';
 import { startHealthServer } from './health/server.js';
 import { getDb } from './db/database.js';
+import { initTraining } from './agent/training.js';
 import { mkdirSync } from 'fs';
 
 async function main(): Promise<void> {
@@ -14,6 +15,10 @@ async function main(): Promise<void> {
   // Initialize database
   getDb();
   console.log('Database initialized');
+
+  // Initialize training directory
+  initTraining();
+  console.log('Training directory initialized');
 
   // Start health check server
   startHealthServer(8080);

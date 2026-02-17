@@ -1,7 +1,14 @@
 import type { App } from '@slack/bolt';
-import { isUserAuthorized, isChannelAuthorized } from '../config.js';
+import { isUserAuthorized, isChannelAuthorized, config } from '../config.js';
 import { runAgent, isThreadBusy } from '../agent/runner.js';
 import { markdownToSlack, chunkMessage } from './formatters.js';
+import {
+  TRAINER_USER_ID,
+  isTrainingMessage,
+  extractTrainingContent,
+  appendTraining,
+  downloadFile,
+} from '../agent/training.js';
 
 export function registerHandlers(app: App): void {
   // Handle @Dad mentions in channels
@@ -33,6 +40,7 @@ export function registerHandlers(app: App): void {
       return;
     }
 
+    // Training messages only work in DMs, not channels
     await handleMessage(client, channelId, threadTs, userId, text);
   });
 
@@ -59,8 +67,117 @@ export function registerHandlers(app: App): void {
     if (!text) return;
 
     const threadTs = (msg.thread_ts || msg.ts) as string;
+
+    // Check for training message — only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && isTrainingMessage(text)) {
+      await handleTraining(client, msg, text);
+      return;
+    }
+
     await handleMessage(client, msg.channel, threadTs, userId, text);
   });
+}
+
+async function handleTraining(
+  client: any,
+  msg: any,
+  text: string,
+): Promise<void> {
+  const threadTs = msg.thread_ts || msg.ts;
+
+  try {
+    // Add brain reaction
+    await client.reactions.add({
+      channel: msg.channel,
+      name: 'brain',
+      timestamp: threadTs,
+    }).catch(() => {});
+
+    // Extract text content
+    const content = extractTrainingContent(text);
+    const parts: string[] = [];
+
+    if (content) {
+      parts.push(content);
+    }
+
+    // Handle file attachments
+    const files = msg.files as any[] | undefined;
+    if (files && files.length > 0) {
+      for (const file of files) {
+        const filename = file.name || file.title || `file_${Date.now()}`;
+
+        if (file.mimetype?.startsWith('text/') || file.mimetype === 'application/json' ||
+            filename.endsWith('.md') || filename.endsWith('.txt') || filename.endsWith('.json') ||
+            filename.endsWith('.csv') || filename.endsWith('.yaml') || filename.endsWith('.yml')) {
+          // Text file — download and inline the content
+          const filePath = await downloadFile(
+            file.url_private,
+            config.slack.botToken,
+            filename,
+          );
+          const { readFileSync } = await import('fs');
+          const fileContent = readFileSync(filePath, 'utf-8');
+          parts.push(`### File: ${filename}\n\`\`\`\n${fileContent}\n\`\`\``);
+        } else if (file.mimetype?.startsWith('image/')) {
+          // Image — download and note the path
+          const filePath = await downloadFile(
+            file.url_private,
+            config.slack.botToken,
+            filename,
+          );
+          parts.push(`### Image: ${filename}\nSaved to: \`${filePath}\``);
+        } else {
+          // Other file — download and note
+          const filePath = await downloadFile(
+            file.url_private,
+            config.slack.botToken,
+            filename,
+          );
+          parts.push(`### File: ${filename}\nSaved to: \`${filePath}\` (${file.mimetype})`);
+        }
+      }
+    }
+
+    if (parts.length === 0) {
+      await client.chat.postMessage({
+        channel: msg.channel,
+        text: "No training content found. Use `training: <your content here>` or attach files.",
+        thread_ts: threadTs,
+      });
+      return;
+    }
+
+    // Append to training file
+    const fullContent = parts.join('\n\n');
+    appendTraining(fullContent);
+
+    // Confirm
+    const summary = fullContent.length > 200
+      ? fullContent.slice(0, 200) + '...'
+      : fullContent;
+
+    await client.chat.postMessage({
+      channel: msg.channel,
+      text: `Got it. Training context updated.\n\n> ${summary.replace(/\n/g, '\n> ')}`,
+      thread_ts: threadTs,
+    });
+
+    // Swap to checkmark
+    await client.reactions.add({
+      channel: msg.channel,
+      name: 'white_check_mark',
+      timestamp: threadTs,
+    }).catch(() => {});
+
+  } catch (err: unknown) {
+    console.error('[Training] Error:', err);
+    await client.chat.postMessage({
+      channel: msg.channel,
+      text: `_Training error: ${err instanceof Error ? err.message : String(err)}_`,
+      thread_ts: threadTs,
+    });
+  }
 }
 
 async function handleMessage(

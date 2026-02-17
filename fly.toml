@@ -23,8 +23,8 @@ primary_region = 'sjc'
     path = '/health'
 
 [[vm]]
-  size = 'shared-cpu-2x'
-  memory = '2048mb'
+  size = 'performance-1x'
+  memory = '8192mb'
 
 [mounts]
   source = 'dad_data'

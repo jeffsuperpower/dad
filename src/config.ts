@@ -27,7 +27,7 @@ export const config = {
     apiKey: required('ANTHROPIC_API_KEY'),
   },
   agent: {
-    model: optional('AGENT_MODEL', 'claude-sonnet-4-5-20250514'),
+    model: optional('AGENT_MODEL', 'claude-sonnet-4-5-20250929'),
     maxTurns: parseInt(optional('AGENT_MAX_TURNS', '25'), 10),
     maxBudgetUsd: parseFloat(optional('AGENT_MAX_BUDGET_USD', '1.00')),
     cwd: optional('AGENT_CWD', '/data/workspace'),
