@@ -74,7 +74,7 @@ async function executeAgent(
   const startTime = Date.now();
 
   // Build CLI args
-  const args = [
+  const baseArgs = [
     '--print',
     '--output-format', 'json',
     '--model', config.agent.model,
@@ -82,15 +82,29 @@ async function executeAgent(
     '--system-prompt', getSystemPrompt(),
   ];
 
-  // Resume session if continuing a thread
+  let result: AgentResult;
+
+  // Try to resume session if continuing a thread
   if (conversation.session_id) {
-    args.push('--resume', conversation.session_id);
+    const resumeArgs = [...baseArgs, '--resume', conversation.session_id, prompt];
+    try {
+      result = await spawnClaude(resumeArgs, config.agent.cwd);
+    } catch (err: unknown) {
+      // Session not found (stale after redeploy) — retry without resume
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('No conversation found') || msg.includes('session')) {
+        console.log('[Agent] Stale session, retrying without --resume');
+        updateSessionId(conversation.id, '');
+        const freshArgs = [...baseArgs, prompt];
+        result = await spawnClaude(freshArgs, config.agent.cwd);
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    const freshArgs = [...baseArgs, prompt];
+    result = await spawnClaude(freshArgs, config.agent.cwd);
   }
-
-  // Add the prompt
-  args.push(prompt);
-
-  const result = await spawnClaude(args, config.agent.cwd);
 
   const durationMs = Date.now() - startTime;
 
