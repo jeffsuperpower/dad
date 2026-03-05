@@ -16,6 +16,7 @@ import {
 import { runDailyDrill } from '../drill/runner.js';
 import { handleDrillUpdate } from '../drill/updater.js';
 import { forwardContactOutEmail } from '../contactout/forwarder.js';
+import { runMadnessPost } from '../madness/runner.js';
 
 // Map respect score to emoji
 function scoreToEmoji(score: number): string {
@@ -102,6 +103,25 @@ export function registerHandlers(app: App): void {
     // Check for training message — only Jeff, only in DMs
     if (userId === TRAINER_USER_ID && isTrainingMessage(text)) {
       await handleTraining(client, msg, text);
+      return;
+    }
+
+    // Manual madness trigger — only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && text.toLowerCase() === 'madness') {
+      try {
+        await client.reactions.add({
+          channel: msg.channel,
+          name: 'skull',
+          timestamp: msg.ts,
+        }).catch(() => {});
+        await runMadnessPost(client);
+      } catch (err) {
+        console.error('[Madness] Manual trigger error:', err);
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: `_Madness error: ${err instanceof Error ? err.message : String(err)}_`,
+        });
+      }
       return;
     }
 

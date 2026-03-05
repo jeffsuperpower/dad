@@ -4,6 +4,8 @@ import { registerHandlers } from './slack/handlers.js';
 import { startHealthServer } from './health/server.js';
 import { getDb } from './db/database.js';
 import { initTraining } from './agent/training.js';
+import { startDrillScheduler } from './drill/scheduler.js';
+import { startMadnessScheduler } from './madness/scheduler.js';
 import { mkdirSync } from 'fs';
 
 async function main(): Promise<void> {
@@ -26,6 +28,16 @@ async function main(): Promise<void> {
   // Create and start Slack app
   const app = createSlackApp();
   registerHandlers(app);
+
+  // Start daily drill scheduler if configured
+  if (config.drill.enabled && config.github.pat) {
+    startDrillScheduler(app);
+  }
+
+  // Start March Madness scheduler
+  if (config.madness.enabled) {
+    startMadnessScheduler(app);
+  }
 
   await app.start();
   console.log('Dad is online and listening for Slack messages');

@@ -54,6 +54,12 @@ export const config = {
     refreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
     fromAddress: optional('GMAIL_FROM_ADDRESS', 'jeff@superpower.com'),
   },
+  madness: {
+    enabled: process.env.MADNESS_ENABLED !== 'false', // on by default
+    cronExpression: optional('MADNESS_CRON', '0 9 * * *'),
+    timezone: optional('MADNESS_TIMEZONE', 'America/Los_Angeles'),
+    channelId: optional('MADNESS_CHANNEL_ID', 'C0AJUMEFK0S'),
+  },
   drill: {
     enabled: process.env.DRILL_ENABLED === 'true',
     userId: optional('DRILL_USER_ID', 'U08QUBV7UNQ'), // Jeff
