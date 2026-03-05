@@ -153,7 +153,14 @@ export function registerHandlers(app: App): void {
 
     // ContactOut forward command - only Jeff, only in DMs
     if (userId === TRAINER_USER_ID && lower.startsWith('contactout ')) {
-      const targetEmail = text.slice('contactout '.length).trim();
+      // Slack auto-links emails as <mailto:x@y.com|x@y.com> - extract the raw address
+      let targetEmail = text.slice('contactout '.length).trim();
+      const mailtoMatch = targetEmail.match(/<mailto:([^|>]+)/);
+      if (mailtoMatch) {
+        targetEmail = mailtoMatch[1];
+      }
+      // Also strip any remaining angle brackets
+      targetEmail = targetEmail.replace(/[<>]/g, '');
       if (!targetEmail || !targetEmail.includes('@')) {
         await client.chat.postMessage({
           channel: msg.channel,
