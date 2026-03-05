@@ -27,6 +27,22 @@ Each Slack message spawns `claude --print --output-format json` via `child_proce
 
 Only Jeff (`U08QUBV7UNQ`) can train Dad by sending `training: <content>` in DMs. Training persists at `/data/training/TRAINING.md` and is injected into the system prompt.
 
+## DM Commands (Jeff only)
+
+- `training: <content>` - Add training context
+- `drill` - Trigger GPET daily drill manually
+- `madness` - Trigger March Madness post manually
+- `contactout email@domain.com` - Forward latest ContactOut email from jeff@superpower.com
+- `move/mark/set/change/clear` - GPET experiment updates
+
+## ContactOut Email Forwarding
+
+Uses Gmail API (googleapis) with OAuth2 to search jeff@superpower.com for the latest contactout.net email and forward it. Slack auto-links emails as `<mailto:x|x>` so the handler strips that formatting.
+
+## March Madness Daily Post
+
+Posts daily at 9 AM PST to `C0AJUMEFK0S`. Scrapes the Death Clock dashboard (`dashboard-five-sepia-57.vercel.app`) for subs/reg pace, fetches P0/P1 projects from GPET `drill-data.json`. Dashboard data is embedded in SSR React serialization (double-escaped JSON in `self.__next_f.push()` calls) - regexes are fragile and may break if dashboard is rebuilt.
+
 ## Model
 
 Default: `claude-sonnet-4-5-20250929`. Do NOT use `claude-sonnet-4-5-20250514` (doesn't exist).
