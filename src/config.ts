@@ -39,6 +39,27 @@ export const config = {
   db: {
     path: optional('DB_PATH', '/data/dad.db'),
   },
+  github: {
+    pat: process.env.GITHUB_PAT || '',
+  },
+  googleCalendar: {
+    clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET || '',
+    refreshToken: process.env.GOOGLE_CALENDAR_REFRESH_TOKEN || '',
+    calendarId: optional('GOOGLE_CALENDAR_ID', 'jeff@superpower.com'),
+  },
+  gmail: {
+    clientId: process.env.GMAIL_CLIENT_ID || '',
+    clientSecret: process.env.GMAIL_CLIENT_SECRET || '',
+    refreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
+    fromAddress: optional('GMAIL_FROM_ADDRESS', 'jeff@superpower.com'),
+  },
+  drill: {
+    enabled: process.env.DRILL_ENABLED === 'true',
+    userId: optional('DRILL_USER_ID', 'U08QUBV7UNQ'), // Jeff
+    cronExpression: optional('DRILL_CRON', '0 7 * * *'),
+    timezone: optional('DRILL_TIMEZONE', 'America/Los_Angeles'),
+  },
 } as const;
 
 export function isUserAuthorized(userId: string): boolean {

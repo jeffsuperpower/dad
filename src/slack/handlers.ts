@@ -13,6 +13,9 @@ import {
   getRelationship,
   updateDisplayName,
 } from '../db/relationships.js';
+import { runDailyDrill } from '../drill/runner.js';
+import { handleDrillUpdate } from '../drill/updater.js';
+import { forwardContactOutEmail } from '../contactout/forwarder.js';
 
 // Map respect score to emoji
 function scoreToEmoji(score: number): string {
@@ -99,6 +102,92 @@ export function registerHandlers(app: App): void {
     // Check for training message — only Jeff, only in DMs
     if (userId === TRAINER_USER_ID && isTrainingMessage(text)) {
       await handleTraining(client, msg, text);
+      return;
+    }
+
+    // Manual drill trigger — only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && text.toLowerCase() === 'drill') {
+      try {
+        await client.reactions.add({
+          channel: msg.channel,
+          name: 'coffee',
+          timestamp: msg.ts,
+        }).catch(() => {});
+        await runDailyDrill(client);
+      } catch (err) {
+        console.error('[Drill] Manual trigger error:', err);
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: `_Drill error: ${err instanceof Error ? err.message : String(err)}_`,
+        });
+      }
+      return;
+    }
+
+    // Drill update commands — only Jeff, only in DMs
+    const lower = text.toLowerCase();
+    if (userId === TRAINER_USER_ID) {
+      if (lower.startsWith('move ') || lower.startsWith('mark ') || lower.startsWith('set ') || lower.startsWith('change ') || lower.startsWith('clear ') || lower.includes('next step')) {
+        try {
+          const result = await handleDrillUpdate(text);
+          if (result) {
+            const emoji = result.success ? 'white_check_mark' : 'x';
+            await client.reactions.add({
+              channel: msg.channel,
+              name: emoji,
+              timestamp: msg.ts,
+            }).catch(() => {});
+            await client.chat.postMessage({
+              channel: msg.channel,
+              text: result.success ? `:green-dot: ${result.message}` : `:red-dot: ${result.message}`,
+              thread_ts: threadTs,
+            });
+            return;
+          }
+        } catch (err) {
+          console.error('[Drill] Update error:', err);
+        }
+        // If handleDrillUpdate returned null, fall through to normal message handling
+      }
+    }
+
+    // ContactOut forward command - only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && lower.startsWith('contactout ')) {
+      const targetEmail = text.slice('contactout '.length).trim();
+      if (!targetEmail || !targetEmail.includes('@')) {
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: 'Usage: `contactout email@domain.com`',
+          thread_ts: threadTs,
+        });
+        return;
+      }
+      try {
+        await client.reactions.add({
+          channel: msg.channel,
+          name: 'email',
+          timestamp: msg.ts,
+        }).catch(() => {});
+        const result = await forwardContactOutEmail(targetEmail);
+        const emoji = result.success ? 'white_check_mark' : 'x';
+        await client.reactions.add({
+          channel: msg.channel,
+          name: emoji,
+          timestamp: msg.ts,
+        }).catch(() => {});
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: result.success ? `:envelope: ${result.message}` : `:x: ${result.message}`,
+          thread_ts: threadTs,
+        });
+      } catch (err) {
+        console.error('[ContactOut] Forward error:', err);
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: `_ContactOut error: ${err instanceof Error ? err.message : String(err)}_`,
+          thread_ts: threadTs,
+        });
+      }
       return;
     }
 
