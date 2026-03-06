@@ -6,6 +6,7 @@ import { getDb } from './db/database.js';
 import { initTraining } from './agent/training.js';
 import { startDrillScheduler } from './drill/scheduler.js';
 import { startMadnessScheduler } from './madness/scheduler.js';
+import { initMadness } from './madness/feedback.js';
 import { mkdirSync } from 'fs';
 
 async function main(): Promise<void> {
@@ -21,6 +22,10 @@ async function main(): Promise<void> {
   // Initialize training directory
   initTraining();
   console.log('Training directory initialized');
+
+  // Initialize madness feedback directory
+  initMadness();
+  console.log('Madness feedback initialized');
 
   // Start health check server
   startHealthServer(8080);

@@ -16,7 +16,8 @@ import {
 import { runDailyDrill } from '../drill/runner.js';
 import { handleDrillUpdate } from '../drill/updater.js';
 import { forwardContactOutEmail } from '../contactout/forwarder.js';
-import { runMadnessPost } from '../madness/runner.js';
+import { runMadnessPost, handleMadnessFeedback } from '../madness/runner.js';
+import { getState as getMadnessState } from '../madness/feedback.js';
 
 // Map respect score to emoji
 function scoreToEmoji(score: number): string {
@@ -70,6 +71,24 @@ export function registerHandlers(app: App): void {
         thread_ts: threadTs,
       });
       return;
+    }
+
+    // Check if this is a thread reply to a Madness post
+    if (event.thread_ts) {
+      const madnessState = getMadnessState();
+      if (madnessState && event.thread_ts === madnessState.lastPostTs && channelId === madnessState.lastPostChannel) {
+        try {
+          await client.reactions.add({
+            channel: channelId,
+            name: 'eyes',
+            timestamp: event.ts,
+          }).catch(() => {});
+          await handleMadnessFeedback(client, text, event.ts, channelId);
+        } catch (err) {
+          console.error('[Madness] Feedback handler error:', err);
+        }
+        return;
+      }
     }
 
     // Training messages only work in DMs, not channels
