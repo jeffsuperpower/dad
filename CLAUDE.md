@@ -41,7 +41,15 @@ Uses Gmail API (googleapis) with OAuth2 to search jeff@superpower.com for the la
 
 ## March Madness Daily Post
 
-Posts daily at 9 AM PST to `C0AJUMEFK0S`. Scrapes the Death Clock dashboard (`dashboard-five-sepia-57.vercel.app`) for subs/reg pace, fetches P0/P1 projects from GPET `drill-data.json`. Dashboard data is embedded in SSR React serialization (double-escaped JSON in `self.__next_f.push()` calls) - regexes are fragile and may break if dashboard is rebuilt.
+Posts daily at 9 AM PST to `C0AJUMEFK0S`. Scrapes the Death Clock dashboard (`dashboard-five-sepia-57.vercel.app/?month=YYYY-MM-01`) for subs/reg pace, fetches P0/P1 projects from GPET `drill-data.json`. Dashboard data is embedded in SSR React serialization (double-escaped JSON in `self.__next_f.push()` calls) - regexes are fragile and may break if dashboard is rebuilt.
+
+### Feedback Loop
+
+@Dad in a Madness post thread triggers feedback processing. Claude reads the current post + feedback, edits the original post via `chat.update`, and saves feedback to `/data/madness/feedback.md`. Accumulated feedback is applied to future posts automatically. State (last post ts/channel) saved to `/data/madness/state.json`.
+
+### Known Data Issue
+
+Dashboard raw actuals (810 subs, 3,748 regs) differ from the projected/pace numbers Jeff uses in his manual report (5,639 subs, 5,191 regs). The feedback loop is designed to correct this over time as Jeff provides corrections in thread replies.
 
 ## Model
 
