@@ -66,6 +66,20 @@ export const config = {
     cronExpression: optional('DRILL_CRON', '0 7 * * *'),
     timezone: optional('DRILL_TIMEZONE', 'America/Los_Angeles'),
   },
+  spenders: {
+    enabled: process.env.SPENDERS_ENABLED !== 'false', // on by default
+    cronExpression: optional('SPENDERS_CRON', '0 */6 * * *'), // every 6 hours
+    timezone: optional('SPENDERS_TIMEZONE', 'America/Los_Angeles'),
+    channelId: optional('SPENDERS_CHANNEL_ID', 'C0ANJ0CQ41J'),
+    klaviyoListId: optional('SPENDERS_KLAVIYO_LIST_ID', 'VHqtXE'),
+    posthogProjectId: optional('SPENDERS_POSTHOG_PROJECT_ID', '195693'),
+  },
+  posthog: {
+    apiKey: process.env.POSTHOG_API_KEY || '',
+  },
+  klaviyo: {
+    apiKey: process.env.KLAVIYO_API_KEY || '',
+  },
 } as const;
 
 export function isUserAuthorized(userId: string): boolean {

@@ -7,6 +7,7 @@ import { initTraining } from './agent/training.js';
 import { startDrillScheduler } from './drill/scheduler.js';
 import { startMadnessScheduler } from './madness/scheduler.js';
 import { initMadness } from './madness/feedback.js';
+import { startSpendersScheduler } from './spenders/scheduler.js';
 import { mkdirSync } from 'fs';
 
 async function main(): Promise<void> {
@@ -42,6 +43,11 @@ async function main(): Promise<void> {
   // Start March Madness scheduler
   if (config.madness.enabled) {
     startMadnessScheduler(app);
+  }
+
+  // Start 35+ high spenders sync scheduler
+  if (config.spenders.enabled && config.posthog.apiKey && config.klaviyo.apiKey) {
+    startSpendersScheduler(app);
   }
 
   await app.start();

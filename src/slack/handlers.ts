@@ -18,6 +18,7 @@ import { handleDrillUpdate } from '../drill/updater.js';
 import { forwardContactOutEmail } from '../contactout/forwarder.js';
 import { runMadnessPost, handleMadnessFeedback } from '../madness/runner.js';
 import { getState as getMadnessState } from '../madness/feedback.js';
+import { runSpendersSync } from '../spenders/runner.js';
 
 // Map respect score to emoji
 function scoreToEmoji(score: number): string {
@@ -139,6 +140,30 @@ export function registerHandlers(app: App): void {
         await client.chat.postMessage({
           channel: msg.channel,
           text: `_Madness error: ${err instanceof Error ? err.message : String(err)}_`,
+        });
+      }
+      return;
+    }
+
+    // Manual spenders sync trigger — only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && text.toLowerCase() === 'spenders') {
+      try {
+        await client.reactions.add({
+          channel: msg.channel,
+          name: 'moneybag',
+          timestamp: msg.ts,
+        }).catch(() => {});
+        await runSpendersSync(client);
+        await client.reactions.add({
+          channel: msg.channel,
+          name: 'white_check_mark',
+          timestamp: msg.ts,
+        }).catch(() => {});
+      } catch (err) {
+        console.error('[Spenders] Manual trigger error:', err);
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: `_Spenders sync error: ${err instanceof Error ? err.message : String(err)}_`,
         });
       }
       return;
