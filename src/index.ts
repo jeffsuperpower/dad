@@ -8,6 +8,7 @@ import { startDrillScheduler } from './drill/scheduler.js';
 import { startMadnessScheduler } from './madness/scheduler.js';
 import { initMadness } from './madness/feedback.js';
 import { startSpendersScheduler } from './spenders/scheduler.js';
+import { startBmvsScheduler } from './bmvs/scheduler.js';
 import { mkdirSync } from 'fs';
 
 async function main(): Promise<void> {
@@ -48,6 +49,11 @@ async function main(): Promise<void> {
   // Start 35+ high spenders sync scheduler
   if (config.spenders.enabled && config.posthog.apiKey && config.klaviyo.apiKey) {
     startSpendersScheduler(app);
+  }
+
+  // Start BMVS appointment checker scheduler
+  if (config.bmvs.enabled) {
+    startBmvsScheduler(app);
   }
 
   await app.start();

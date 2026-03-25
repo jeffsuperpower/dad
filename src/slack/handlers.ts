@@ -19,6 +19,7 @@ import { forwardContactOutEmail } from '../contactout/forwarder.js';
 import { runMadnessPost, handleMadnessFeedback } from '../madness/runner.js';
 import { getState as getMadnessState } from '../madness/feedback.js';
 import { runSpendersSync } from '../spenders/runner.js';
+import { isStopped as isBmvsStopped, stopChecking as stopBmvs, resumeChecking as resumeBmvs, checkBmvsAppointments } from '../bmvs/runner.js';
 
 // Map respect score to emoji
 function scoreToEmoji(score: number): string {
@@ -187,6 +188,54 @@ export function registerHandlers(app: App): void {
         await client.chat.postMessage({
           channel: msg.channel,
           text: `_Spenders sync error: ${err instanceof Error ? err.message : String(err)}_`,
+        });
+      }
+      return;
+    }
+
+    // BMVS STOP command — anyone in DMs (but really just Jeff/Tash)
+    if (text === 'STOP') {
+      if (!isBmvsStopped()) {
+        stopBmvs();
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: ':octagonal_sign: *BMVS appointment checking stopped.* I won\'t check for appointments anymore.\n\nSend `bmvs` to start checking again.',
+          thread_ts: threadTs,
+        });
+      } else {
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: 'BMVS checking is already stopped. Send `bmvs` to start checking again.',
+          thread_ts: threadTs,
+        });
+      }
+      return;
+    }
+
+    // Manual BMVS trigger — only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && text.toLowerCase() === 'bmvs') {
+      try {
+        // Resume if stopped
+        if (isBmvsStopped()) {
+          resumeBmvs();
+          await client.chat.postMessage({
+            channel: msg.channel,
+            text: ':white_check_mark: BMVS checking resumed! Running a check now...',
+            thread_ts: threadTs,
+          });
+        }
+        await client.reactions.add({
+          channel: msg.channel,
+          name: 'hospital',
+          timestamp: msg.ts,
+        }).catch(() => {});
+        await checkBmvsAppointments(client);
+      } catch (err) {
+        console.error('[BMVS] Manual trigger error:', err);
+        await client.chat.postMessage({
+          channel: msg.channel,
+          text: `_BMVS error: ${err instanceof Error ? err.message : String(err)}_`,
+          thread_ts: threadTs,
         });
       }
       return;

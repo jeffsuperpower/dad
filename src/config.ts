@@ -80,6 +80,13 @@ export const config = {
   klaviyo: {
     apiKey: process.env.KLAVIYO_API_KEY || '',
   },
+  bmvs: {
+    enabled: process.env.BMVS_ENABLED !== 'false', // on by default
+    // 7 AM and 9 PM AEST (Sydney time) = twice daily
+    cronExpression: optional('BMVS_CRON', '0 7,21 * * *'),
+    timezone: optional('BMVS_TIMEZONE', 'Australia/Sydney'),
+    userId: optional('BMVS_USER_ID', 'U08QUBV7UNQ'), // Jeff's Slack user ID for DMs
+  },
 } as const;
 
 export function isUserAuthorized(userId: string): boolean {
