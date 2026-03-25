@@ -26,9 +26,16 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=builder /app/build ./build
 
-# Create workspace directory
-RUN mkdir -p /data/workspace
+# Copy startup scripts
+COPY generate-mcp-config.sh entrypoint.sh ./
+RUN chmod +x ./generate-mcp-config.sh ./entrypoint.sh
 
+# Create non-root user (required: claude CLI refuses bypass-permissions as root)
+RUN useradd -m -s /bin/bash dad && \
+    mkdir -p /data/workspace && \
+    chown -R dad:dad /data /app
+
+# Start as root so entrypoint can chown /data, then drops to dad user
 EXPOSE 8080
 
-CMD ["node", "build/index.js"]
+CMD ["./entrypoint.sh"]

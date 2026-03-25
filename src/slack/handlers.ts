@@ -1,6 +1,6 @@
 import type { App } from '@slack/bolt';
 import { isUserAuthorized, isChannelAuthorized, config } from '../config.js';
-import { runAgent, isThreadBusy } from '../agent/runner.js';
+import { runAgent, isThreadBusy, stopAll, stopAgent, type ProgressEvent } from '../agent/runner.js';
 import { markdownToSlack, chunkMessage } from './formatters.js';
 import {
   TRAINER_USER_ID,
@@ -74,6 +74,18 @@ export function registerHandlers(app: App): void {
       return;
     }
 
+    // Stop command in thread — kill the active task for this thread
+    const textLower = text.toLowerCase();
+    if ((textLower === 'stop' || textLower === 'cancel') && event.thread_ts) {
+      const threadKey = `${channelId}:${event.thread_ts}`;
+      const stopped = stopAgent(threadKey);
+      await say({
+        text: stopped ? 'stopped' : 'nothing running in this thread',
+        thread_ts: threadTs,
+      });
+      return;
+    }
+
     // Check if this is a thread reply to a Madness post
     if (event.thread_ts) {
       const madnessState = getMadnessState();
@@ -142,6 +154,17 @@ export function registerHandlers(app: App): void {
           text: `_Madness error: ${err instanceof Error ? err.message : String(err)}_`,
         });
       }
+      return;
+    }
+
+    // Stop all active queries — only Jeff, only in DMs
+    if (userId === TRAINER_USER_ID && (text.toLowerCase() === 'stop' || text.toLowerCase() === 'cancel')) {
+      const count = stopAll();
+      await client.chat.postMessage({
+        channel: msg.channel,
+        text: count > 0 ? `stopped ${count} active task${count > 1 ? 's' : ''}` : 'nothing running right now',
+        thread_ts: threadTs,
+      });
       return;
     }
 
@@ -377,6 +400,18 @@ async function handleMessage(
 ): Promise<void> {
   const threadKey = `${channelId}:${threadTs}`;
 
+  // Stop command in thread context
+  const lowerText = text.toLowerCase();
+  if (lowerText === 'stop' || lowerText === 'cancel') {
+    const stopped = stopAgent(threadKey);
+    await client.chat.postMessage({
+      channel: channelId,
+      text: stopped ? 'stopped' : 'nothing running in this thread',
+      thread_ts: threadTs,
+    });
+    return;
+  }
+
   // Check if this thread already has an active query
   if (isThreadBusy(threadKey)) {
     await client.chat.postMessage({
@@ -414,8 +449,73 @@ async function handleMessage(
     thread_ts: threadTs,
   });
 
+  // Track progress updates for streaming
+  const progressLines: string[] = [];
+  let lastUpdateTime = 0;
+  const UPDATE_INTERVAL_MS = 5000;
+  let lastActivityTime = Date.now();
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
   try {
-    const result = await runAgent(text, channelId, threadTs, userId);
+    // Heartbeat: update placeholder every 10s even if no new events
+    heartbeatInterval = setInterval(async () => {
+      if (progressLines.length === 0) return;
+      const elapsed = Math.round((Date.now() - lastActivityTime) / 1000);
+      const recentLines = progressLines.slice(-12).join('\n');
+      const heartbeat = elapsed > 15 ? `\n:hourglass: _${elapsed}s since last activity - still running..._` : '';
+      try {
+        await client.chat.update({
+          channel: channelId,
+          ts: placeholder.ts!,
+          text: `_Working..._\n${recentLines}${heartbeat}`,
+        });
+      } catch {
+        // Ignore
+      }
+    }, 10000);
+
+    const onProgress = async (event: ProgressEvent) => {
+      let line = '';
+      if (event.type === 'tool_use' && event.tool) {
+        const toolLabel = event.tool.replace(/^mcp__\w+__/, '');
+        line = event.input
+          ? `:wrench: \`${toolLabel}\` ${event.input.slice(0, 100)}`
+          : `:wrench: \`${toolLabel}\``;
+      } else if (event.type === 'text' && event.text) {
+        const trimmed = event.text.trim();
+        if (trimmed.length > 20) {
+          line = trimmed.slice(0, 300);
+        }
+      }
+
+      if (!line) return;
+
+      // Add timestamp to each line
+      const now = new Date();
+      const ts = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'America/Los_Angeles' });
+      progressLines.push(`\`${ts}\` ${line}`);
+      lastActivityTime = Date.now();
+
+      // Throttle Slack updates
+      const nowMs = Date.now();
+      if (nowMs - lastUpdateTime < UPDATE_INTERVAL_MS) return;
+      lastUpdateTime = nowMs;
+
+      // Show recent progress lines
+      const recentLines = progressLines.slice(-12).join('\n');
+      try {
+        await client.chat.update({
+          channel: channelId,
+          ts: placeholder.ts!,
+          text: `_Working..._\n${recentLines}`,
+        });
+      } catch {
+        // Ignore update failures (rate limits, etc.)
+      }
+    };
+
+    const result = await runAgent(text, channelId, threadTs, userId, onProgress);
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
 
     // Format and send response
     const formatted = markdownToSlack(result.text || 'Done (no text output).');
@@ -459,6 +559,7 @@ async function handleMessage(
       // Ignore
     }
   } catch (err: unknown) {
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
     const errorMsg =
       err instanceof Error && err.message === 'THREAD_BUSY'
         ? "_I'm still working on your previous request._"

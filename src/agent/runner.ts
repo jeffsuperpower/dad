@@ -23,8 +23,16 @@ export interface AgentResult {
   sessionId: string;
 }
 
+export interface ProgressEvent {
+  type: 'tool_use' | 'text' | 'result';
+  tool?: string;
+  input?: string;
+  text?: string;
+}
+
 // Concurrency control
 const activeQueries = new Map<string, Promise<AgentResult>>();
+const activeProcesses = new Map<string, import('child_process').ChildProcess>();
 const MAX_CONCURRENT = 3;
 
 function activeCount(): number {
@@ -35,12 +43,36 @@ export function isThreadBusy(threadKey: string): boolean {
   return activeQueries.has(threadKey);
 }
 
+export function stopAgent(threadKey: string): boolean {
+  const proc = activeProcesses.get(threadKey);
+  if (proc) {
+    proc.kill('SIGTERM');
+    activeProcesses.delete(threadKey);
+    activeQueries.delete(threadKey);
+    console.log(`[Agent] Killed process for ${threadKey}`);
+    return true;
+  }
+  return false;
+}
+
+export function stopAll(): number {
+  let count = 0;
+  for (const [key, proc] of activeProcesses) {
+    proc.kill('SIGTERM');
+    activeProcesses.delete(key);
+    activeQueries.delete(key);
+    count++;
+  }
+  console.log(`[Agent] Killed ${count} active processes`);
+  return count;
+}
+
 export async function runAgent(
   prompt: string,
   channelId: string,
   threadId: string,
   userId: string,
-  onProgress?: (text: string) => void,
+  onProgress?: (event: ProgressEvent) => void,
 ): Promise<AgentResult> {
   const threadKey = `${channelId}:${threadId}`;
 
@@ -66,7 +98,7 @@ async function executeAgent(
   channelId: string,
   threadId: string,
   userId: string,
-  onProgress?: (text: string) => void,
+  onProgress?: (event: ProgressEvent) => void,
 ): Promise<AgentResult> {
   // Find or create conversation
   let conversation = findConversation(channelId, threadId);
@@ -94,37 +126,41 @@ ${recentInteractions.length > 0 ? `\nRecent interaction history:\n${recentIntera
 
   const startTime = Date.now();
 
-  // Build CLI args
+  // Build CLI args - use stream-json for progress updates
   const baseArgs = [
     '--print',
-    '--output-format', 'json',
+    '--verbose',
+    '--output-format', 'stream-json',
     '--model', config.agent.model,
     '--max-turns', String(config.agent.maxTurns),
     '--system-prompt', getSystemPrompt(userContext),
+    '--permission-mode', 'bypassPermissions',
+    '--mcp-config', '/app/mcp-config.json',
   ];
 
   let result: AgentResult;
+  const threadKey = `${channelId}:${threadId}`;
 
   // Try to resume session if continuing a thread
   if (conversation.session_id) {
-    const resumeArgs = [...baseArgs, '--resume', conversation.session_id, prompt];
+    const resumeArgs = [...baseArgs, '--resume', conversation.session_id, '--', prompt];
     try {
-      result = await spawnClaude(resumeArgs, config.agent.cwd);
+      result = await spawnClaude(resumeArgs, config.agent.cwd, onProgress, threadKey);
     } catch (err: unknown) {
-      // Session not found (stale after redeploy) — retry without resume
+      // Session not found (stale after redeploy) - retry without resume
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('No conversation found') || msg.includes('session')) {
         console.log('[Agent] Stale session, retrying without --resume');
         updateSessionId(conversation.id, '');
-        const freshArgs = [...baseArgs, prompt];
-        result = await spawnClaude(freshArgs, config.agent.cwd);
+        const freshArgs = [...baseArgs, '--', prompt];
+        result = await spawnClaude(freshArgs, config.agent.cwd, onProgress, threadKey);
       } else {
         throw err;
       }
     }
   } else {
-    const freshArgs = [...baseArgs, prompt];
-    result = await spawnClaude(freshArgs, config.agent.cwd);
+    const freshArgs = [...baseArgs, '--', prompt];
+    result = await spawnClaude(freshArgs, config.agent.cwd, onProgress, threadKey);
   }
 
   const durationMs = Date.now() - startTime;
@@ -171,6 +207,8 @@ ${recentInteractions.length > 0 ? `\nRecent interaction history:\n${recentIntera
 function spawnClaude(
   args: string[],
   cwd: string,
+  onProgress?: (event: ProgressEvent) => void,
+  threadKey?: string,
 ): Promise<AgentResult> {
   return new Promise((resolve, reject) => {
     console.log('[Agent] Spawning claude with args:', args.slice(0, 6).join(' '), '...');
@@ -181,11 +219,36 @@ function spawnClaude(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
+    // Track process for cancellation
+    if (threadKey) {
+      activeProcesses.set(threadKey, proc);
+    }
+
     let stderr = '';
+    let finalResult = '';
+    let sessionId = '';
+    let totalCost = 0;
+    let numTurns = 0;
+    let lineBuf = '';
 
     proc.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+      lineBuf += chunk.toString();
+
+      // Process complete lines
+      let newlineIdx: number;
+      while ((newlineIdx = lineBuf.indexOf('\n')) !== -1) {
+        const line = lineBuf.slice(0, newlineIdx).trim();
+        lineBuf = lineBuf.slice(newlineIdx + 1);
+
+        if (!line) continue;
+
+        try {
+          const event = JSON.parse(line);
+          processStreamEvent(event, onProgress, (r) => { finalResult = r; }, (s) => { sessionId = s; }, (c) => { totalCost = c; }, (t) => { numTurns = t; });
+        } catch {
+          // Not JSON, skip
+        }
+      }
     });
 
     proc.stderr.on('data', (chunk: Buffer) => {
@@ -193,9 +256,24 @@ function spawnClaude(
     });
 
     proc.on('close', (code) => {
+      // Clean up process tracking
+      if (threadKey) {
+        activeProcesses.delete(threadKey);
+      }
+
       console.log('[Agent] claude exited with code:', code);
       if (stderr) {
         console.log('[Agent] stderr:', stderr.slice(0, 500));
+      }
+
+      // Process any remaining buffer
+      if (lineBuf.trim()) {
+        try {
+          const event = JSON.parse(lineBuf.trim());
+          processStreamEvent(event, onProgress, (r) => { finalResult = r; }, (s) => { sessionId = s; }, (c) => { totalCost = c; }, (t) => { numTurns = t; });
+        } catch {
+          // Not JSON
+        }
       }
 
       if (code !== 0) {
@@ -203,25 +281,13 @@ function spawnClaude(
         return;
       }
 
-      try {
-        const parsed = JSON.parse(stdout);
-        resolve({
-          text: parsed.result || 'Done.',
-          costUsd: parsed.total_cost_usd || 0,
-          turns: parsed.num_turns || 0,
-          sessionId: parsed.session_id || '',
-          durationMs: parsed.duration_ms || 0,
-        });
-      } catch {
-        // If not JSON, just return the raw output
-        resolve({
-          text: stdout || 'Done (no output).',
-          costUsd: 0,
-          turns: 0,
-          sessionId: '',
-          durationMs: 0,
-        });
-      }
+      resolve({
+        text: finalResult || 'Done.',
+        costUsd: totalCost,
+        turns: numTurns,
+        sessionId,
+        durationMs: 0,
+      });
     });
 
     proc.on('error', (err) => {
@@ -231,4 +297,60 @@ function spawnClaude(
     // Close stdin
     proc.stdin.end();
   });
+}
+
+function processStreamEvent(
+  event: any,
+  onProgress: ((event: ProgressEvent) => void) | undefined,
+  setResult: (r: string) => void,
+  setSessionId: (s: string) => void,
+  setCost: (c: number) => void,
+  setTurns: (t: number) => void,
+): void {
+  // stream-json emits objects like:
+  // { type: "assistant", message: { ... }, session_id: "..." }
+  // { type: "result", result: "...", session_id: "...", total_cost_usd: 0.05, num_turns: 3 }
+
+  if (event.session_id) {
+    setSessionId(event.session_id);
+  }
+
+  if (event.type === 'result') {
+    setResult(event.result || event.text || '');
+    if (event.total_cost_usd) setCost(event.total_cost_usd);
+    if (event.num_turns) setTurns(event.num_turns);
+    return;
+  }
+
+  if (!onProgress) return;
+
+  if (event.type === 'assistant' && event.message) {
+    const msg = event.message;
+    // Assistant messages contain content blocks
+    if (msg.content && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === 'tool_use') {
+          const toolName = block.name || 'unknown';
+          // Summarize what the tool is doing
+          let inputSummary = '';
+          if (block.input) {
+            if (typeof block.input === 'string') {
+              inputSummary = block.input.slice(0, 200);
+            } else if (block.input.command) {
+              inputSummary = block.input.command.slice(0, 200);
+            } else if (block.input.pattern) {
+              inputSummary = block.input.pattern;
+            } else if (block.input.site_id) {
+              inputSummary = `site: ${block.input.site_id}`;
+            } else if (block.input.query) {
+              inputSummary = block.input.query.slice(0, 200);
+            }
+          }
+          onProgress({ type: 'tool_use', tool: toolName, input: inputSummary });
+        } else if (block.type === 'text' && block.text) {
+          onProgress({ type: 'text', text: block.text });
+        }
+      }
+    }
+  }
 }

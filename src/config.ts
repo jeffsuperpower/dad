@@ -28,8 +28,8 @@ export const config = {
   },
   agent: {
     model: optional('AGENT_MODEL', 'claude-sonnet-4-5-20250929'),
-    maxTurns: parseInt(optional('AGENT_MAX_TURNS', '25'), 10),
-    maxBudgetUsd: parseFloat(optional('AGENT_MAX_BUDGET_USD', '1.00')),
+    maxTurns: parseInt(optional('AGENT_MAX_TURNS', '50'), 10),
+    maxBudgetUsd: parseFloat(optional('AGENT_MAX_BUDGET_USD', '2.00')),
     cwd: optional('AGENT_CWD', '/data/workspace'),
   },
   auth: {
