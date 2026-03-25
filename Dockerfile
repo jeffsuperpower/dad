@@ -26,6 +26,14 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=builder /app/build ./build
 
+# Copy skills from growth-ai-agents (synced at build time)
+COPY skills/ /app/skills/
+
+# Generate skill catalog from SKILL.md frontmatter
+COPY scripts/generate-skill-catalog.sh /app/scripts/
+RUN chmod +x /app/scripts/generate-skill-catalog.sh && \
+    /app/scripts/generate-skill-catalog.sh /app/skills /app/skills/catalog.json > /app/skills/catalog.json
+
 # Copy startup scripts
 COPY generate-mcp-config.sh entrypoint.sh ./
 RUN chmod +x ./generate-mcp-config.sh ./entrypoint.sh

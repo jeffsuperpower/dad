@@ -1,3 +1,4 @@
+import { readFileSync, existsSync } from 'fs';
 import { getTrainingContext } from './training.js';
 
 const BASE_PROMPT = `You are Dad, an always-on AI assistant for the Superpower Health team. You run on a remote server (Fly.io) and communicate via Slack.
@@ -66,8 +67,50 @@ You do NOT have access to:
 - Any secrets or credentials unless explicitly provided in the conversation
 `;
 
+// Load skill catalog from build-time generated JSON
+function getSkillCatalog(): string {
+  const catalogPath = '/app/skills/catalog.json';
+  // Dev fallback
+  const devPath = new URL('../../skills/catalog.json', import.meta.url).pathname;
+  const path = existsSync(catalogPath) ? catalogPath : existsSync(devPath) ? devPath : null;
+
+  if (!path) return '';
+
+  try {
+    const catalog = JSON.parse(readFileSync(path, 'utf-8')) as Array<{
+      name: string;
+      description: string;
+      trigger: string;
+      path: string;
+    }>;
+
+    if (catalog.length === 0) return '';
+
+    const lines = catalog.map(s =>
+      `- **${s.trigger}**: ${s.description || '(no description)'}`
+    );
+
+    return `## Available Skills (${catalog.length})
+
+You have ${catalog.length} skills available on disk. When a user's request matches a skill below, read the full skill file from /app/skills/<name>/SKILL.md BEFORE executing. Do not attempt to run a skill from memory alone - always read the file first.
+
+IMPORTANT: You run on a remote Fly.io server, not a local Mac. Some skills reference /Users/jeffy/ paths - those won't work here. Adapt paths to use /data/workspace/ instead. Local-only tools (Figma, TextMate, open command) are unavailable - output to files or Slack instead.
+
+${lines.join('\n')}`;
+  } catch (err) {
+    console.error('[Skills] Failed to load catalog:', err);
+    return '';
+  }
+}
+
 export function getSystemPrompt(userContext?: string): string {
   let prompt = BASE_PROMPT;
+
+  // Add skill catalog
+  const skills = getSkillCatalog();
+  if (skills) {
+    prompt += `\n\n${skills}`;
+  }
 
   if (userContext) {
     prompt += `\n\n## Current User Context\n\n${userContext}`;
